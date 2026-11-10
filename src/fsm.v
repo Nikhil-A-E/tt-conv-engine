@@ -7,7 +7,8 @@
 //   LOAD_KERNEL   : Accept K coefficients via data_in, write to coeff_ram
 //   STREAM_SAMPLE : Accept 1 sample, push into sample_shreg
 //   MAC_CLEAR     : One-cycle state to synchronously clear the accumulator
-//   MAC_ITERATE   : K-cycle loop: acc += h[k] * x[n-k]   (k = 0..K-1)
+//   MAC_ITERATE   : K*DW-cycle loop: acc += h[k] * x[n-k], one bit of h[k]
+//                   per cycle (shift-add), k = 0..K-1
 //   OUTPUT_STATE  : Present result, assert valid_out for 1 cycle
 //
 // Design decision: We insert MAC_CLEAR between STREAM_SAMPLE and MAC_ITERATE
@@ -47,6 +48,7 @@ module fsm #(
     output reg                       acc_clr,
     output reg  [$clog2(K)-1:0]      mac_coeff_addr,
     output reg  [$clog2(K)-1:0]      mac_samp_addr,
+    output reg  [$clog2(DW)-1:0]     mac_bit,        // coefficient bit (shift-add MAC)
 
     // mac_unit result
     input  wire signed [DW-1:0]      mac_result
@@ -68,8 +70,14 @@ module fsm #(
     // K-1 at counter width (avoids 32-bit compare width warnings)
     localparam [$clog2(K)-1:0] K_MINUS_1 = K - 1;
 
-    // k counter: counts 0..K-1 during MAC_ITERATE
-    reg [$clog2(K)-1:0] cnt;
+    // MAC counter: {tap k, coefficient bit} = 0..K*DW-1 during MAC_ITERATE.
+    // The shift-add MAC unit handles one coefficient bit per cycle, so one
+    // output takes K*DW = 64 MAC cycles (area: no array multiplier).
+    localparam BW = $clog2(DW);
+    localparam CW = $clog2(K) + BW;
+    localparam [CW-1:0] CNT_LAST = K*DW - 1;
+
+    reg [CW-1:0] cnt;
     // coefficient load counter: counts 0..K-1 during LOAD_KERNEL
     reg [$clog2(K)-1:0] coeff_cnt;
 
@@ -86,13 +94,11 @@ module fsm #(
     // ------------------------------------------------------------------
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n)
-            cnt <= {$clog2(K){1'b0}};
-        else if (state == MAC_CLEAR)
-            cnt <= {$clog2(K){1'b0}};
+            cnt <= {CW{1'b0}};
         else if (state == MAC_ITERATE)
             cnt <= cnt + 1'b1;
         else
-            cnt <= {$clog2(K){1'b0}};
+            cnt <= {CW{1'b0}};
     end
 
     // ------------------------------------------------------------------
@@ -143,7 +149,7 @@ module fsm #(
             end
 
             MAC_ITERATE: begin
-                if (cnt == K_MINUS_1)
+                if (cnt == CNT_LAST)
                     next_state = OUTPUT_STATE;
             end
 
@@ -170,6 +176,7 @@ module fsm #(
         acc_clr          = 1'b0;
         mac_coeff_addr   = {$clog2(K){1'b0}};
         mac_samp_addr    = {$clog2(K){1'b0}};
+        mac_bit          = {BW{1'b0}};
         valid_out        = 1'b0;
 
         case (state)
@@ -211,8 +218,9 @@ module fsm #(
 
             MAC_ITERATE: begin
                 mac_en         = 1'b1;
-                mac_coeff_addr = cnt;
-                mac_samp_addr  = cnt;
+                mac_coeff_addr = cnt[CW-1:BW];
+                mac_samp_addr  = cnt[CW-1:BW];
+                mac_bit        = cnt[BW-1:0];
             end
 
             OUTPUT_STATE: begin

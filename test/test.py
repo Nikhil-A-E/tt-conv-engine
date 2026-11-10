@@ -84,14 +84,24 @@ class Host:
         for h in kernel:
             await self.send_byte(h, mode=0, start=0, hold=hold)
 
-    async def stream(self, sample, hold=3, timeout=100):
-        """Send one sample and wait for the sticky DONE flag; return result."""
-        await self.send_byte(sample, mode=1, start=1, hold=hold, gap=0)
+    async def wait_done(self, level, timeout):
         for _ in range(timeout):
-            if self.bit(self.dut.uio_out, DONE):
-                return to_s8(int(self.dut.uo_out.value))
+            if self.bit(self.dut.uio_out, DONE) == level:
+                return
             await ClockCycles(self.dut.clk, 1)
-        raise AssertionError(f"timeout waiting for DONE after sample {sample}")
+        raise AssertionError(f"timeout waiting for DONE={level}")
+
+    async def stream(self, sample, hold=3, timeout=300):
+        """Send one sample and wait for a NEW result; return it.
+
+        DONE from the previous result clears a few cycles after VALID_IN
+        rises, so wait for it to drop first, then for it to rise again
+        (same rule a real host must follow).
+        """
+        await self.send_byte(sample, mode=1, start=1, hold=hold, gap=0)
+        await self.wait_done(0, timeout)
+        await self.wait_done(1, timeout)
+        return to_s8(int(self.dut.uo_out.value))
 
 
 async def setup(dut):
@@ -208,7 +218,7 @@ async def test_done_and_valid_out(dut):
     await host.load_kernel([64] + [0] * (K - 1))
     await host.send_byte(127, mode=1, start=1, gap=0)
     strobes = 0
-    for _ in range(60):
+    for _ in range(200):
         await ClockCycles(dut.clk, 1)
         strobes += host.bit(dut.uio_out, VALID_OUT)
     assert strobes == 1, f"VALID_OUT pulsed {strobes} times, expected 1"
@@ -216,7 +226,7 @@ async def test_done_and_valid_out(dut):
     assert to_s8(int(dut.uo_out.value)) == golden([64] + [0] * 7, [127])[0]
 
     # Next valid_in clears DONE
-    await host.send_byte(0, mode=1, start=1, hold=3, gap=0)
+    await host.send_byte(0, mode=1, start=1, hold=3, gap=2)
     assert host.bit(dut.uio_out, DONE) == 0, "DONE should clear on next valid_in"
 
 
@@ -227,7 +237,7 @@ async def test_stream_without_start_is_ignored(dut):
     kernel = [64] + [0] * (K - 1)
     await host.load_kernel(kernel)
     await host.send_byte(100, mode=1, start=0)   # ignored
-    await ClockCycles(dut.clk, 30)
+    await ClockCycles(dut.clk, 150)
     assert host.bit(dut.uio_out, DONE) == 0, "no result expected without START"
     got = await host.stream(-100)
     assert got == golden(kernel, [-100])[0]

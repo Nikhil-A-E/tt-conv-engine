@@ -42,6 +42,7 @@ module conv_core #(
     wire signed [DW-1:0]      shreg_rd_data;
 
     wire                      mac_en;
+    wire [$clog2(DW)-1:0]     mac_bit;
     wire                      acc_clr;
     wire signed [DW-1:0]      mac_result;
     /* verilator lint_off UNUSEDSIGNAL */
@@ -72,6 +73,7 @@ module conv_core #(
         .acc_clr         (acc_clr),
         .mac_coeff_addr  (coeff_rd_addr),
         .mac_samp_addr   (shreg_rd_addr),
+        .mac_bit         (mac_bit),
         .mac_result      (mac_result)
     );
 
@@ -100,6 +102,7 @@ module conv_core #(
         .rst_n     (rst_n),
         .a         (shreg_rd_data),
         .b         (coeff_rd_data),
+        .bit_idx   (mac_bit),
         .mac_en    (mac_en),
         .acc_clr   (acc_clr),
         .round_out (mac_result),
