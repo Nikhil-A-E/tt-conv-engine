@@ -23,11 +23,12 @@ module sample_shreg #(
     reg signed [DW-1:0] shreg [0:K-1];
 
     // Area: plain DFFs with a synchronous clear instead of async-reset DFFs.
-    // Reset (held for several clocks, as on the TT board) clears the history
-    // through the same path as clr.
+    // The history is cleared by clr, which the FSM asserts at the start of
+    // every kernel load; the protocol always loads a kernel after reset, so
+    // rst_n is not needed here (keeps rst_n a pure async reset elsewhere).
     integer i;
     always @(posedge clk) begin
-        if (clr || !rst_n) begin
+        if (clr) begin
             for (i = 0; i < K; i = i + 1)
                 shreg[i] <= {DW{1'b0}};
         end else if (shift_en) begin
@@ -39,5 +40,9 @@ module sample_shreg #(
     end
 
     assign rd_data = shreg[rd_addr];
+
+    /* verilator lint_off UNUSEDSIGNAL */
+    wire _unused_rst_n = rst_n;
+    /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule

@@ -72,7 +72,7 @@ module tt_um_nikhil_a_e_conv (
     wire [7:0] core_uio_out;
     wire [7:0] core_uio_oe;
 
-    conv_top #(.DW(8), .K(8), .ACCW(20), .SHIFT(12)) u_conv (
+    conv_top #(.DW(8), .K(8), .ACCW(20), .SHIFT(10)) u_conv (
         .clk     (clk),
         .rst_n   (rst_n),
         .ui_in   (ui_in),

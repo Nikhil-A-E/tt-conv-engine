@@ -20,7 +20,7 @@ module conv_top #(
     parameter DW    = 8,
     parameter K     = 8,
     parameter ACCW  = 20,
-    parameter SHIFT = 12
+    parameter SHIFT = 10
 ) (
     input  wire        clk,
     input  wire        rst_n,

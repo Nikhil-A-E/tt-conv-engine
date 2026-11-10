@@ -6,12 +6,14 @@
 # demo board would, so the same tests run on RTL and on the gate-level netlist.
 
 import os
+import random
 
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles
 
 K = 8
+SHIFT = 10  # accumulator bits dropped on output (must match src/conv_top.v)
 VEC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vectors")
 
 # uio bit positions
@@ -29,7 +31,7 @@ def golden(kernel, samples):
         acc = 0
         for k in range(K):
             acc = max(-(1 << 19), min((1 << 19) - 1, acc + kernel[k] * shreg[k]))
-        out.append(max(-128, min(127, acc >> 12)))
+        out.append(max(-128, min(127, acc >> SHIFT)))
     return out
 
 
@@ -181,7 +183,7 @@ async def test_accumulator_extremes(dut):
         for i, s in enumerate(samples):
             got = await host.stream(s)
             assert got == exp[i], f"extreme k={kernel[0]} x={x} [{i}] got={got} exp={exp[i]}"
-    assert golden([-128] * K, [-128] * K)[-1] == 32
+    assert golden([-128] * K, [-128] * K)[-1] == 127  # +128 clamped
 
 
 @cocotb.test()
@@ -241,3 +243,58 @@ async def test_stream_without_start_is_ignored(dut):
     assert host.bit(dut.uio_out, DONE) == 0, "no result expected without START"
     got = await host.stream(-100)
     assert got == golden(kernel, [-100])[0]
+
+
+@cocotb.test()
+async def test_many_random_kernels(dut):
+    """Regression: 12 random kernels, 24 random samples each, reload between."""
+    host = await setup(dut)
+    rng = random.Random(20261110)
+    for n in range(12):
+        kernel = [rng.randint(-128, 127) for _ in range(K)]
+        samples = [rng.randint(-128, 127) for _ in range(24)]
+        await host.load_kernel(kernel)
+        exp = golden(kernel, samples)
+        for i, x in enumerate(samples):
+            got = await host.stream(x)
+            assert got == exp[i], f"kernel #{n} sample {i}: in={x} got={got} exp={exp[i]}"
+
+
+@cocotb.test()
+async def test_valid_while_busy_is_ignored(dut):
+    """A VALID_IN pulse during a computation must be dropped without
+    corrupting the running result or the sample history."""
+    host = await setup(dut)
+    kernel = [64, -32, 16, -8, 8, -16, 32, -64]
+    await host.load_kernel(kernel)
+    await host.stream(50)
+    # Start sample 100, then fire a second sample (-77) while it computes
+    await host.send_byte(100, mode=1, start=1, gap=10)
+    await host.send_byte(-77, mode=1, start=1, gap=0)
+    await host.wait_done(1, 300)
+    got = to_s8(int(dut.uo_out.value))
+    assert got == golden(kernel, [50, 100])[-1], f"busy: got={got}"
+    # -77 must not have entered the history
+    got = await host.stream(25)
+    assert got == golden(kernel, [50, 100, 25])[-1], f"history corrupted: got={got}"
+
+
+@cocotb.test()
+async def test_reset_during_computation(dut):
+    """Reset in the middle of a MAC run must leave the chip fully usable."""
+    host = await setup(dut)
+    await host.load_kernel([127] * K)
+    await host.send_byte(127, mode=1, start=1, gap=20)   # mid-computation
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 5)
+    dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 5)
+    assert host.bit(dut.uio_out, DONE) == 0, "DONE must be 0 after reset"
+    assert int(dut.uo_out.value) == 0, "uo_out must be 0 after reset"
+    kernel = [rng_k for rng_k in (10, 20, 30, 40, -40, -30, -20, -10)]
+    samples = [127, -128, 64, -64, 1, -1, 0, 100, -100]
+    await host.load_kernel(kernel)
+    exp = golden(kernel, samples)
+    for i, x in enumerate(samples):
+        got = await host.stream(x)
+        assert got == exp[i], f"after reset [{i}] got={got} exp={exp[i]}"

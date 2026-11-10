@@ -15,13 +15,13 @@
 //   ACCW-bit adder instead of ~DW^2 adder cells).
 //   On acc_clr=1 (synchronous):    acc <= 0
 //   acc is 20-bit signed; with K=8 it cannot overflow (see below).
-//   round_out: accumulator >>> SHIFT, truncated to DW bits (always in range).
+//   round_out: accumulator >>> SHIFT, saturated to DW-bit signed.
 // =============================================================================
 
 module mac_unit #(
     parameter DW    = 8,    // data/coeff width
     parameter ACCW  = 20,   // accumulator width
-    parameter SHIFT = 12    // bits to drop on output (20-8=12)
+    parameter SHIFT = 10    // bits to drop on output
 ) (
     input  wire                     clk,
     input  wire                     rst_n,
@@ -44,7 +44,9 @@ module mac_unit #(
     wire [ACCW-1:0] a_ext   = {{(ACCW-DW){a[DW-1]}}, a};
     wire [ACCW-1:0] a_shift = a_ext << bit_idx;
     wire            b_bit   = b[bit_idx];
+    /* verilator lint_off WIDTHTRUNC */
     localparam [$clog2(DW)-1:0] LAST_BIT = DW - 1;
+    /* verilator lint_on WIDTHTRUNC */
     wire            neg     = (bit_idx == LAST_BIT);
     wire [ACCW-1:0] addend  = {ACCW{b_bit}} & (a_shift ^ {ACCW{neg}});
     wire            cin     = b_bit & neg;
@@ -70,19 +72,25 @@ module mac_unit #(
     assign acc_out = acc;
 
     // ------------------------------------------------------------------
-    // Truncate to DW-bit output
+    // Truncate and saturate to DW-bit output
     // ------------------------------------------------------------------
-    // Arithmetic right-shift by SHIFT bits. With the bound above,
-    // acc >>> 12 is always within [-32, 32], so the int8 clamp to
-    // [-128, 127] can never trigger and is omitted (bit-exact with the
-    // golden model's saturate_int8).
+    // Arithmetic right-shift by SHIFT bits, then clamp to [-128, 127].
+    // With SHIFT=10 and the bound above, acc >>> 10 is within [-127, 128];
+    // the clamp is needed only for the single worst case
+    // 8 x (-128) x (-128) = 131072 -> 128 -> 127.
     wire signed [ACCW-1:0] truncated = $signed(acc) >>> SHIFT;
 
+    // Fits in DW bits iff all bits above the DW-bit sign equal the sign
+    wire            t_sign = truncated[ACCW-1];
+    wire            t_fits = (truncated[ACCW-2:DW-1] == {(ACCW-DW){t_sign}});
+
+    localparam [DW-1:0] OUT_MAX = {1'b0, {(DW-1){1'b1}}};  //  127
+    localparam [DW-1:0] OUT_MIN = {1'b1, {(DW-1){1'b0}}};  // -128
+
     /* verilator lint_off UNUSEDSIGNAL */
-    wire [ACCW-DW-1:0] _unused_trunc_hi = truncated[ACCW-1:DW];
     wire               _unused_sum_lsb  = sum_w[0];
     /* verilator lint_on UNUSEDSIGNAL */
 
-    assign round_out = truncated[DW-1:0];
+    assign round_out = t_fits ? truncated[DW-1:0] : (t_sign ? OUT_MIN : OUT_MAX);
 
 endmodule

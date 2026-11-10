@@ -68,7 +68,9 @@ module fsm #(
     reg [2:0] state, next_state;
 
     // K-1 at counter width (avoids 32-bit compare width warnings)
+    /* verilator lint_off WIDTHTRUNC */
     localparam [$clog2(K)-1:0] K_MINUS_1 = K - 1;
+    /* verilator lint_on WIDTHTRUNC */
 
     // MAC counter: {tap k, coefficient bit} = 0..K*DW-1 during MAC_ITERATE.
     // The shift-add MAC unit handles one coefficient bit per cycle, so one
