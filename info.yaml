@@ -1,7 +1,7 @@
 # Tiny Tapeout project information
 project:
   title:        "Reconfigurable MAC-Based Convolution Engine"      # Project title
-  author:       "Nikhil A E"      # Your name
+  author:       "Nikhil A E, Monisha S, Navya K J, Poornachandra B R, Shylashree N, RV College of Engineering"      # Your name
   discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
   description:  "8-tap reloadable FIR / 1D convolution accelerator using a single reused signed MAC unit"      # One line description of what your project does
   language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
